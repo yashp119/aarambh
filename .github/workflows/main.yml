@@ -1,0 +1,63 @@
+name: Deploy WordPress
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Configure SSH
+        uses: webfactory/ssh-agent@v0.5.3
+        with:
+          ssh-private-key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+
+      - name: Deploy to EC2
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} 'bash -s' << 'EOF'
+            # Update system packages
+            sudo apt-get update
+            sudo apt-get upgrade -y
+
+            # Install necessary software
+            sudo apt-get install -y apache2 php libapache2-mod-php mysql-server php-mysql
+
+            # Download and extract WordPress
+            sudo wget -P /var/www/html https://wordpress.org/latest.tar.gz
+            sudo tar -xzf /var/www/html/latest.tar.gz -C /var/www/html
+            sudo rm /var/www/html/latest.tar.gz
+
+            # Configure permissions
+            sudo chown -R www-data:www-data /var/www/html/
+            sudo chmod -R 755 /var/www/html/
+
+            # Create WordPress virtual host configuration
+            echo '
+            <VirtualHost *:80>
+                ServerName your-domain-or-ip-address
+                DocumentRoot /var/www/html/wordpress
+
+                <Directory /var/www/html/wordpress>
+                    Options Indexes FollowSymLinks MultiViews
+                    AllowOverride All
+                    Order allow,deny
+                    allow from all
+                </Directory>
+
+                ErrorLog ${APACHE_LOG_DIR}/wordpress_error.log
+                CustomLog ${APACHE_LOG_DIR}/wordpress_access.log combined
+            </VirtualHost>
+            ' | sudo tee /etc/apache2/sites-available/wordpress.conf
+
+            # Enable WordPress virtual host
+            sudo a2ensite wordpress.conf
+            sudo a2enmod rewrite
+
+            # Restart Apache
+            sudo systemctl restart apache2
+          EOF
